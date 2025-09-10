@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Restaurant Admin Panel</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    body { background: #f8f9fa; }
+    .order-card { border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+    .order-header { background: #198754; color: white; padding: 0.5rem 1rem; border-radius: 12px 12px 0 0; }
+    .order-body { padding: 1rem; }
+    .tab-pane { padding-top: 1rem; }
+    .order-time { font-size: 0.9rem; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container py-4">
+    <h2 class="mb-4 text-success">🍴 Admin Panel</h2>
+
+    <!-- Tabs -->
+    <ul class="nav nav-tabs" id="orderTabs">
+      <li class="nav-item">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#activeTab">Active Orders</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#historyTab">History</button>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+      <!-- Active Orders -->
+      <div class="tab-pane fade show active" id="activeTab">
+        <div id="activeOrders"></div>
+      </div>
+
+      <!-- History -->
+      <div class="tab-pane fade" id="historyTab">
+        <div class="d-flex my-3">
+          <input type="date" id="historyDate" class="form-control me-2" />
+          <button class="btn btn-outline-success" onclick="loadHistory()">Filter</button>
+        </div>
+        <div id="historyOrders"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const socket = io("/admin");
+
+    function formatDate(isoString) {
+      const d = new Date(isoString);
+      return d.toLocaleString();
+    }
+
+    function renderOrderCard(order, isHistory=false) {
+      let itemsHtml = order.items.map(i => 
+        `<li>${i.qty} × ${i.name} - ₹${(i.price * i.qty).toFixed(2)}</li>`
+      ).join("");
+
+      let actionsHtml = "";
+      if (!isHistory) {
+        if (order.status === "pending") {
+          actionsHtml = `
+            <button class="btn btn-sm btn-success me-2" onclick="updateOrder(${order.id}, 'accepted')">Accept</button>
+            <button class="btn btn-sm btn-danger" onclick="updateOrder(${order.id}, 'rejected')">Reject</button>`;
+        } else if (order.status === "accepted") {
+          actionsHtml = `
+            <button class="btn btn-sm btn-warning me-2" onclick="updateOrder(${order.id}, 'preparing')">Preparing</button>
+            <button class="btn btn-sm btn-danger" disabled>Reject</button>`;
+        } else if (order.status === "preparing") {
+          actionsHtml = `<button class="btn btn-sm btn-primary" onclick="updateOrder(${order.id}, 'ready')">Ready</button>`;
+        } else if (order.status === "ready") {
+          actionsHtml = `<button class="btn btn-sm btn-dark" onclick="updateOrder(${order.id}, 'delivered')">Delivered</button>`;
+        }
+      }
+
+      return `
+        <div class="order-card">
+          <div class="order-header d-flex justify-content-between align-items-center">
+            <span>Order #${order.id}</span>
+            <span class="badge bg-light text-dark">${order.status.toUpperCase()}</span>
+          </div>
+          <div class="order-body">
+            <p><strong>Car Info:</strong> ${order.car_info || "-"}</p>
+            <p><strong>Total:</strong> ₹${order.total.toFixed(2)}</p>
+            <p class="order-time">Placed at: ${formatDate(order.created_at)}</p>
+            <ul>${itemsHtml}</ul>
+            ${actionsHtml}
+          </div>
+        </div>`;
+    }
+
+    async function loadActiveOrders() {
+      const res = await fetch("/api/admin/orders");
+      const data = await res.json();
+      document.getElementById("activeOrders").innerHTML = data.map(o => renderOrderCard(o)).join("");
+    }
+
+    async function loadHistory() {
+      const res = await fetch("/api/admin/history");
+      let data = await res.json();
+      const filterDate = document.getElementById("historyDate").value;
+      if (filterDate) {
+        data = data.filter(o => o.created_at.startsWith(filterDate));
+      }
+      document.getElementById("historyOrders").innerHTML = data.map(o => renderOrderCard(o, true)).join("");
+    }
+
+    async function updateOrder(id, status) {
+      await fetch(`/api/admin/order/${id}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+      loadActiveOrders();
+      loadHistory();
+    }
+
+    // --- Socket events ---
+    socket.on("new_order", data => {
+      loadActiveOrders();
+    });
+    socket.on("order_update", data => {
+      loadActiveOrders();
+      loadHistory();
+    });
+
+    // --- Init ---
+    loadActiveOrders();
+    loadHistory();
+  </script>
+</body>
+</html>
